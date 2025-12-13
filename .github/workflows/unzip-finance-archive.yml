@@ -26,8 +26,10 @@ jobs:
         with:
           ref: ${{ github.event.inputs.target_branch }}
 
-      - name: Ensure unzip is available
-        run: sudo apt-get update && sudo apt-get install -y unzip
+      - name: Install tools (unzip, rsync)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip rsync
 
       - name: Unzip archive and merge into root
         run: |
@@ -37,40 +39,33 @@ jobs:
             echo "Archive not found: $ARCHIVE_PATH" >&2
             exit 1
           fi
+
           TMP_DIR=$(mktemp -d)
           unzip -q "$ARCHIVE_PATH" -d "$TMP_DIR"
 
           shopt -s dotglob nullglob
           TOPS=("$TMP_DIR"/*)
 
-          # Function to copy/merge contents respecting existing directories
           copy_merge() {
             SRC="$1"
             for ITEM in "$SRC"/*; do
               [ -e "$ITEM" ] || continue
               NAME="$(basename "$ITEM")"
 
-              # Skip git internals if they exist in the zip
+              # Skip git internals
               if [ "$NAME" = ".git" ]; then
                 continue
               fi
 
               if [ -d "$ITEM" ]; then
                 mkdir -p "./$NAME"
-                # Use rsync if available for robust merging; fallback to cp
-                if command -v rsync >/dev/null 2>&1; then
-                  rsync -a --delete --exclude=".git" "$ITEM"/ "./$NAME"/
-                else
-                  cp -R "$ITEM"/ "./$NAME"/ || true
-                fi
+                rsync -a --exclude=".git" "$ITEM"/ "./$NAME"/
               else
-                # Overwrite files in root if they exist
                 cp -f "$ITEM" "./$NAME"
               fi
             done
           }
 
-          # If the zip contains a single top-level folder, flatten it; otherwise merge all
           if [ ${#TOPS[@]} -eq 1 ] && [ -d "${TOPS[0]}" ]; then
             copy_merge "${TOPS[0]}"
           else
@@ -79,19 +74,41 @@ jobs:
 
           rm -rf "$TMP_DIR"
 
-      - name: Remove the zip archive (optional)
-        run: rm -f finance-main.zip || true
+      - name: Remove workflow files from zip to avoid permission errors
+        run: |
+          set -euxo pipefail
+          if [ -d ".github/workflows" ]; then
+            # Remove any workflows brought by the zip except our unzip workflow
+            find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) \
+              ! -name "unzip-finance-archive.yml" -exec rm -f {} +
+          fi
+
+      - name: Optionally remove the zip
+        run: |
+          set -euxo pipefail
+          rm -f "${{ github.event.inputs.path }}" || true
 
       - name: Commit changes
         run: |
           set -euxo pipefail
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+
           git add -A
+
+          # Unstage any workflow files except our unzip workflow
+          git restore --staged --worktree -- .github/workflows || true
+          if [ -f ".github/workflows/unzip-finance-archive.yml" ]; then
+            git add .github/workflows/unzip-finance-archive.yml
+          fi
+
           if git diff --cached --quiet; then
             echo "No changes to commit." && exit 0
           fi
-          git commit -m "Unzip finance-main.zip into repo root"
+
+          git commit -m "Unzip finance-main.zip into repo root (excluding workflows from zip)"
 
       - name: Push changes
-        run: git push origin ${{ github.event.inputs.target_branch }}
+        run: |
+          set -euxo pipefail
+          git push origin "${{ github.event.inputs.target_branch }}"
