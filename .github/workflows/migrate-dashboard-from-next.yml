@@ -1,19 +1,19 @@
-name: Migrate Dashboard from Next.js into CRA (from app/(pages)/user/dashboard)
+name: Migrate Dashboard from Next.js into CRA (src/app support)
 
 on:
   workflow_dispatch:
     inputs:
       target_branch:
-        description: 'Branch to update'
+        description: 'Branch to update (destination CRA branch)'
         default: 'react-migration-cra-ts'
         required: true
         type: string
       source_branch:
-        description: 'Branch where the Next.js Dashboard source exists (defaults to current target_branch)'
+        description: 'Branch where the Next.js Dashboard source exists (defaults to target_branch)'
         required: false
         type: string
       dashboard_hint_path:
-        description: 'Exact path to the Dashboard source (e.g., app/(pages)/user/dashboard/page.tsx)'
+        description: 'Exact path to the Dashboard source (e.g., src/app/(pages)/user/dashboard/page.tsx)'
         required: false
         type: string
 
@@ -47,7 +47,20 @@ jobs:
           ref: ${{ steps.resolve.outputs.source_branch }}
           path: src_repo
 
-      - name: Locate Dashboard source
+      - name: Debug list common Next dirs in source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd src_repo
+          echo "Workspace (source): $PWD"
+          for d in src/app src/app/(pages) src/app/(pages)/user src/pages app pages; do
+            if [ -d "$d" ]; then
+              echo "Contents of $d:"
+              ls -la "$d" || true
+            fi
+          done
+
+      - name: Locate Dashboard source (supports src/app)
         id: find_dashboard
         shell: bash
         run: |
@@ -57,37 +70,60 @@ jobs:
           HINT="${{ github.event.inputs.dashboard_hint_path }}"
           FOUND=""
 
-          # If a hint is provided, try it first
+          # Use explicit hint if provided and exists
           if [ -n "$HINT" ] && [ -f "$HINT" ]; then
             FOUND="$HINT"
           fi
 
-          # If no hint, try common Next.js app routes inside app/(pages)/user/dashboard
+          # Try src/app/(pages)/user/dashboard first (your stated location)
           if [ -z "$FOUND" ]; then
             for candidate in \
+              "src/app/(pages)/user/dashboard/page.tsx" \
+              "src/app/(pages)/user/dashboard/page.jsx" \
+              "src/app/(pages)/user/dashboard/page.js" \
+              "src/app/(pages)/user/dashboard/index.tsx" \
+              "src/app/(pages)/user/dashboard/index.jsx" \
+              "src/app/(pages)/user/dashboard/index.js"
+            do
+              if [ -f "$candidate" ]; then
+                FOUND="$candidate"
+                break
+              fi
+            done
+          fi
+
+          # Other common src/app locations
+          if [ -z "$FOUND" ]; then
+            for candidate in \
+              "src/app/dashboard/page.tsx" \
+              "src/app/dashboard/page.jsx" \
+              "src/app/dashboard/page.js" \
+              "src/app/dashboard/index.tsx" \
+              "src/app/dashboard/index.jsx" \
+              "src/app/dashboard/index.js"
+            do
+              if [ -f "$candidate" ]; then
+                FOUND="$candidate"
+                break
+              fi
+            done
+          fi
+
+          # Legacy pages/ paths
+          if [ -z "$FOUND" ]; then
+            for candidate in \
+              "src/pages/dashboard.tsx" \
+              "src/pages/dashboard.jsx" \
+              "src/pages/dashboard.js" \
+              "pages/dashboard.tsx" \
+              "pages/dashboard.jsx" \
+              "pages/dashboard.js" \
               "app/(pages)/user/dashboard/page.tsx" \
               "app/(pages)/user/dashboard/page.jsx" \
               "app/(pages)/user/dashboard/page.js" \
-              "app/(pages)/user/dashboard/index.tsx" \
-              "app/(pages)/user/dashboard/index.jsx" \
-              "app/(pages)/user/dashboard/index.js"
-            do
-              if [ -f "$candidate" ]; then
-                FOUND="$candidate"
-                break
-              fi
-            done
-          fi
-
-          # Generic fallbacks
-          if [ -z "$FOUND" ]; then
-            for candidate in \
               "app/dashboard/page.tsx" \
               "app/dashboard/page.jsx" \
-              "app/dashboard/page.js" \
-              "pages/dashboard.tsx" \
-              "pages/dashboard.jsx" \
-              "pages/dashboard.js"
+              "app/dashboard/page.js"
             do
               if [ -f "$candidate" ]; then
                 FOUND="$candidate"
@@ -96,8 +132,13 @@ jobs:
             done
           fi
 
+          # Grep fallback
           if [ -z "$FOUND" ]; then
-            echo "ERROR: Could not find Dashboard source. Provide dashboard_hint_path like app/(pages)/user/dashboard/page.tsx" >&2
+            FOUND="$(git ls-files | grep -E '(^|/)(app|src/app|pages|src/pages)/.*(dashboard|user/dashboard)/(page|index)\.(tsx|jsx|js)$' | head -n1 || true)"
+          fi
+
+          if [ -z "$FOUND" ]; then
+            echo "ERROR: Dashboard source not found. Provide dashboard_hint_path like src/app/(pages)/user/dashboard/page.tsx" >&2
             exit 1
           fi
 
@@ -116,22 +157,33 @@ jobs:
           # Copy to CRA pages as Dashboard.tsx
           cp "src_repo/$SRC_PATH" "dest/src/pages/Dashboard.tsx"
 
-          # Basic adaptations for CRA
           FILE="dest/src/pages/Dashboard.tsx"
 
-          # Remove next/head and next/image imports; switch next/link to react-router-dom
+          # Adapt imports: next/head, next/image, next/link
           sed -i "s/^\\s*import .* from 'next\\/head';\\s*$//g" "$FILE" || true
           sed -i "s/^\\s*import .* from 'next\\/image';\\s*$//g" "$FILE" || true
           sed -i "s/from 'next\\/link'/from 'react-router-dom'/g" "$FILE" || true
 
-          # Convert Link href to to
+          # Convert JSX Link href to to
           sed -i 's/<Link\\([^>]*\\)href=/<Link\\1to=/g' "$FILE" || true
 
-          # Convert Next Image tag name to img (props remain)
+          # Convert Next Image tag name to img (basic heuristic)
           sed -i 's/<Image/<img/g' "$FILE" || true
 
-          # Strip simple <Head>...</Head> blocks (non-greedy)
+          # Remove simple <Head>...</Head> blocks (non-greedy)
           perl -0777 -pe "s/<Head>.*?<\\/Head>//gs" -i "$FILE" || true
+
+          # If this is a server component (uses Next's "use server"), convert to client component
+          # by adding "use client" at the top when React hooks or client-side code is detected.
+          if grep -Eq 'useState|useEffect|useMemo|useCallback' "$FILE"; then
+            # Prepend "use client" if not present
+            if ! grep -q "^['\"]use client['\"]" "$FILE"; then
+              TMP="$(mktemp)"
+              printf '%s\n' "/* Converted from Next app route to client component */" "'use client';" > "$TMP"
+              cat "$FILE" >> "$TMP"
+              mv "$TMP" "$FILE"
+            fi
+          fi
 
           # Ensure default export exists
           if ! grep -q 'export default' "$FILE"; then
@@ -200,6 +252,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "Migrate Dashboard from Next.js (app/(pages)/user/dashboard) into CRA and wire routes/nav"
+            git commit -m "Migrate Dashboard from Next.js (supports src/app paths) into CRA and wire routes/nav"
             git push origin "${{ steps.resolve.outputs.target_branch }}"
           fi
