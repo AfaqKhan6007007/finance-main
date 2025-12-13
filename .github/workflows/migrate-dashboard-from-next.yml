@@ -1,4 +1,4 @@
-name: Migrate Dashboard from Next.js into CRA (robust)
+name: Migrate Dashboard from Next.js into CRA (from app/(pages)/user/dashboard)
 
 on:
   workflow_dispatch:
@@ -8,8 +8,12 @@ on:
         default: 'react-migration-cra-ts'
         required: true
         type: string
+      source_branch:
+        description: 'Branch where the Next.js Dashboard source exists (defaults to current target_branch)'
+        required: false
+        type: string
       dashboard_hint_path:
-        description: 'Optional hint path (e.g., pages/dashboard.tsx or app/dashboard/page.tsx)'
+        description: 'Exact path to the Dashboard source (e.g., app/(pages)/user/dashboard/page.tsx)'
         required: false
         type: string
 
@@ -20,125 +24,132 @@ jobs:
   migrate-dashboard:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out target branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.target_branch }}
-
-      - name: List repository files for debugging
+      - name: Resolve branches
+        id: resolve
         shell: bash
         run: |
-          set -euxo pipefail
-          echo "Workspace: $PWD"
-          echo "Top-level files:"
-          ls -la
-          echo "Known Next-like dirs if present:"
-          for d in pages src/pages app src/app; do
-            if [ -d "$d" ]; then
-              echo "Contents of $d:"
-              ls -la "$d" || true
-            fi
-          done
+          set -euo pipefail
+          TB="${{ github.event.inputs.target_branch }}"
+          SB="${{ github.event.inputs.source_branch }}"
+          if [ -z "${SB}" ]; then SB="${TB}"; fi
+          echo "target_branch=$TB" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$SB" >> "$GITHUB_OUTPUT"
 
-      - name: Find Dashboard source in Next.js code
+      - name: Check out target branch (destination)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.target_branch }}
+          path: dest
+
+      - name: Check out source branch (where Next Dashboard lives)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.source_branch }}
+          path: src_repo
+
+      - name: Locate Dashboard source
         id: find_dashboard
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
+          cd src_repo
+
           HINT="${{ github.event.inputs.dashboard_hint_path }}"
           FOUND=""
 
-          echo "User-provided hint: '${HINT}'"
+          # If a hint is provided, try it first
           if [ -n "$HINT" ] && [ -f "$HINT" ]; then
             FOUND="$HINT"
-            echo "Using user-provided path: $FOUND"
-          else
-            echo "Hint not provided or not a file; scanning common locations..."
+          fi
+
+          # If no hint, try common Next.js app routes inside app/(pages)/user/dashboard
+          if [ -z "$FOUND" ]; then
             for candidate in \
-              "pages/dashboard.tsx" \
-              "pages/dashboard.jsx" \
-              "pages/dashboard.js" \
-              "src/pages/dashboard.tsx" \
-              "src/pages/dashboard.jsx" \
-              "src/pages/dashboard.js" \
-              "app/dashboard/page.tsx" \
-              "app/dashboard/page.jsx" \
-              "app/dashboard/page.js" \
-              "src/app/dashboard/page.tsx" \
-              "src/app/dashboard/page.jsx" \
-              "src/app/dashboard/page.js"
+              "app/(pages)/user/dashboard/page.tsx" \
+              "app/(pages)/user/dashboard/page.jsx" \
+              "app/(pages)/user/dashboard/page.js" \
+              "app/(pages)/user/dashboard/index.tsx" \
+              "app/(pages)/user/dashboard/index.jsx" \
+              "app/(pages)/user/dashboard/index.js"
             do
               if [ -f "$candidate" ]; then
                 FOUND="$candidate"
-                echo "Found candidate: $FOUND"
                 break
               fi
             done
+          fi
 
-            if [ -z "$FOUND" ]; then
-              echo "No common location found; grepping tracked files..."
-              FOUND="$(git ls-files | grep -E '(^|/)dashboard\.(tsx|jsx|js)$' | head -n1 || true)"
-              if [ -n "$FOUND" ]; then
-                echo "Found by grep: $FOUND"
+          # Generic fallbacks
+          if [ -z "$FOUND" ]; then
+            for candidate in \
+              "app/dashboard/page.tsx" \
+              "app/dashboard/page.jsx" \
+              "app/dashboard/page.js" \
+              "pages/dashboard.tsx" \
+              "pages/dashboard.jsx" \
+              "pages/dashboard.js"
+            do
+              if [ -f "$candidate" ]; then
+                FOUND="$candidate"
+                break
               fi
-            fi
+            done
           fi
 
           if [ -z "$FOUND" ]; then
-            echo "ERROR: No Dashboard source file found. Provide dashboard_hint_path (e.g., app/dashboard/page.tsx)." >&2
+            echo "ERROR: Could not find Dashboard source. Provide dashboard_hint_path like app/(pages)/user/dashboard/page.tsx" >&2
             exit 1
           fi
 
+          echo "Found Dashboard at: $FOUND"
           echo "found_path=$FOUND" >> "$GITHUB_OUTPUT"
-          echo "Selected Dashboard source: $FOUND"
 
-      - name: Prepare destination directories
+      - name: Copy and adapt Dashboard to CRA
         shell: bash
         run: |
-          set -euxo pipefail
-          mkdir -p src/pages src/routes
+          set -euo pipefail
+          SRC_PATH="${{ steps.find_dashboard.outputs.found_path }}"
+          echo "Source file: $SRC_PATH"
 
-      - name: Copy Dashboard to CRA and adapt imports
-        shell: bash
-        run: |
-          set -euxo pipefail
-          SRC="${{ steps.find_dashboard.outputs.found_path }}"
-          DEST="src/pages/Dashboard.tsx"
+          mkdir -p dest/src/pages dest/src/routes
 
-          echo "Copying '$SRC' -> '$DEST'"
-          cp "$SRC" "$DEST"
+          # Copy to CRA pages as Dashboard.tsx
+          cp "src_repo/$SRC_PATH" "dest/src/pages/Dashboard.tsx"
 
-          echo "Adapting imports in '$DEST' (next/head, next/image, next/link -> react-router-dom)"
-          # Remove next/head import
-          sed -i "s/^\\s*import .* from 'next\\/head';\\s*$//g" "$DEST" || true
-          # Remove next/image import and convert tag name; actual props remain (safe for now)
-          sed -i "s/^\\s*import .* from 'next\\/image';\\s*$//g" "$DEST" || true
-          sed -i 's/<Image/<img/g' "$DEST" || true
-          # Replace next/link import with react-router-dom
-          sed -i "s/from 'next\\/link'/from 'react-router-dom'/g" "$DEST" || true
-          # Convert JSX Link href to to
-          sed -i 's/<Link\\([^>]*\\)href=/<Link\\1to=/g' "$DEST" || true
-          # Remove simple inline <Head>...</Head> blocks if present (non-greedy)
-          perl -0777 -pe "s/<Head>.*?<\\/Head>//gs" -i "$DEST" || true
+          # Basic adaptations for CRA
+          FILE="dest/src/pages/Dashboard.tsx"
 
-          echo "Ensuring default export exists"
-          if ! grep -q 'export default' "$DEST"; then
-            NAME=$(grep -E 'export (const|function|class) ' "$DEST" | head -n1 | sed -E 's/export (const|function|class) ([A-Za-z0-9_]+).*/\2/' || true)
+          # Remove next/head and next/image imports; switch next/link to react-router-dom
+          sed -i "s/^\\s*import .* from 'next\\/head';\\s*$//g" "$FILE" || true
+          sed -i "s/^\\s*import .* from 'next\\/image';\\s*$//g" "$FILE" || true
+          sed -i "s/from 'next\\/link'/from 'react-router-dom'/g" "$FILE" || true
+
+          # Convert Link href to to
+          sed -i 's/<Link\\([^>]*\\)href=/<Link\\1to=/g' "$FILE" || true
+
+          # Convert Next Image tag name to img (props remain)
+          sed -i 's/<Image/<img/g' "$FILE" || true
+
+          # Strip simple <Head>...</Head> blocks (non-greedy)
+          perl -0777 -pe "s/<Head>.*?<\\/Head>//gs" -i "$FILE" || true
+
+          # Ensure default export exists
+          if ! grep -q 'export default' "$FILE"; then
+            NAME=$(grep -E 'export (const|function|class) ' "$FILE" | head -n1 | sed -E 's/export (const|function|class) ([A-Za-z0-9_]+).*/\2/' || true)
             if [ -n "$NAME" ]; then
-              printf '\nexport default %s;\n' "$NAME" >> "$DEST"
+              printf '\nexport default %s;\n' "$NAME" >> "$FILE"
             else
-              # Wrap content minimally
               printf '%s\n' "import React from 'react';" \
                 "export default function Dashboard() {" \
                 "  return <main style={{ padding: '1rem' }}><h1>Dashboard</h1></main>;" \
-                "}" > "$DEST"
+                "}" > "$FILE"
             fi
           fi
 
-      - name: Wire Dashboard into routes
+      - name: Wire Dashboard route and nav in CRA
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           printf '%s\n' \
             "import React from 'react';" \
             "import Home from '../pages/Home';" \
@@ -149,12 +160,8 @@ jobs:
             "export const routes: AppRoute[] = [" \
             "  { path: '/', element: <Home /> }," \
             "  { path: '/dashboard', element: <Dashboard /> }," \
-            "];" > src/routes/index.tsx
+            "];" > dest/src/routes/index.tsx
 
-      - name: Update App.tsx navigation
-        shell: bash
-        run: |
-          set -euxo pipefail
           printf '%s\n' \
             "import React from 'react';" \
             "import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';" \
@@ -180,17 +187,19 @@ jobs:
             "      </Routes>" \
             "    </BrowserRouter>" \
             "  );" \
-            "}" > src/App.tsx
+            "}" > dest/src/App.tsx
 
-      - name: Commit Dashboard migration
+      - name: Commit Dashboard migration to target branch
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
+          cd dest
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add src/pages/Dashboard.tsx src/routes/index.tsx src/App.tsx
           if git diff --cached --quiet; then
-            echo "No changes to commit." && exit 0
+            echo "No changes to commit."
+          else
+            git commit -m "Migrate Dashboard from Next.js (app/(pages)/user/dashboard) into CRA and wire routes/nav"
+            git push origin "${{ steps.resolve.outputs.target_branch }}"
           fi
-          git commit -m "Migrate Dashboard from Next.js into CRA (imports adapted, routes wired)"
-          git push origin "${{ github.event.inputs.target_branch }}"
