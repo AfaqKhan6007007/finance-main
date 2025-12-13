@@ -1,4 +1,4 @@
-name: Ensure react-scripts installed and build CRA
+name: Ensure react-scripts installed and build CRA (resolve TS peer deps)
 
 on:
   workflow_dispatch:
@@ -27,25 +27,28 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install or pin react-scripts and TypeScript
+      - name: Pin TypeScript to 4.9.5 and ensure react-scripts 5.0.1
         shell: bash
         run: |
           set -euxo pipefail
+
           if [ ! -f package.json ]; then
             echo "package.json not found" >&2
             exit 1
           fi
 
-          # Install react-scripts 5.0.1 if missing
-          if ! jq -e '.dependencies["react-scripts"]' package.json >/dev/null 2>&1; then
-            npm install --save react-scripts@5.0.1
-          else
-            echo "react-scripts already listed in package.json"
-          fi
+          # Show current TS version
+          node -e "try{const p=require('./package.json');console.log('Current TS:',p.devDependencies?.typescript||p.dependencies?.typescript||'none')}catch(e){console.log('No package.json parsed')}" || true
 
-          # Pin TypeScript to 4.9.5 for CRA 5 compatibility
-          # Use devDependency; install even if already present at v5
+          # Remove any existing TypeScript to avoid dual versions
+          npm uninstall typescript || true
+
+          # Install TS 4.9.5 as devDependency (CRA 5 peer range ^3.2.1 || ^4)
           npm install --save-dev typescript@4.9.5
+
+          # Ensure react-scripts 5.0.1 in dependencies
+          # Use legacy peer deps to avoid resolution conflicts with existing lint deps
+          npm install --save react-scripts@5.0.1 --legacy-peer-deps
 
       - name: Commit package.json changes (if any)
         shell: bash
@@ -55,14 +58,18 @@ jobs:
             git config user.name "github-actions"
             git config user.email "github-actions@github.com"
             git add package.json package-lock.json
-            git commit -m "Ensure react-scripts@5.0.1 and TypeScript@4.9.5 for CRA build"
+            git commit -m "Pin TypeScript to 4.9.5 and add react-scripts@5.0.1 (legacy peer deps)"
             git push origin "${{ github.event.inputs.target_branch }}"
           else
             echo "No changes to commit."
           fi
 
-      - name: Install dependencies cleanly
-        run: npm ci || npm install
+      - name: Clean install with legacy peer deps
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # Prefer clean install; fall back to install with legacy peer deps for consistency
+          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
       - name: Build CRA
         run: npm run build
