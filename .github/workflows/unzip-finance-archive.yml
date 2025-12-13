@@ -29,7 +29,7 @@ jobs:
       - name: Ensure unzip is available
         run: sudo apt-get update && sudo apt-get install -y unzip
 
-      - name: Unzip archive
+      - name: Unzip archive and merge into root
         run: |
           set -euxo pipefail
           ARCHIVE_PATH="${{ github.event.inputs.path }}"
@@ -39,13 +39,44 @@ jobs:
           fi
           TMP_DIR=$(mktemp -d)
           unzip -q "$ARCHIVE_PATH" -d "$TMP_DIR"
+
           shopt -s dotglob nullglob
           TOPS=("$TMP_DIR"/*)
+
+          # Function to copy/merge contents respecting existing directories
+          copy_merge() {
+            SRC="$1"
+            for ITEM in "$SRC"/*; do
+              [ -e "$ITEM" ] || continue
+              NAME="$(basename "$ITEM")"
+
+              # Skip git internals if they exist in the zip
+              if [ "$NAME" = ".git" ]; then
+                continue
+              fi
+
+              if [ -d "$ITEM" ]; then
+                mkdir -p "./$NAME"
+                # Use rsync if available for robust merging; fallback to cp
+                if command -v rsync >/dev/null 2>&1; then
+                  rsync -a --delete --exclude=".git" "$ITEM"/ "./$NAME"/
+                else
+                  cp -R "$ITEM"/ "./$NAME"/ || true
+                fi
+              else
+                # Overwrite files in root if they exist
+                cp -f "$ITEM" "./$NAME"
+              fi
+            done
+          }
+
+          # If the zip contains a single top-level folder, flatten it; otherwise merge all
           if [ ${#TOPS[@]} -eq 1 ] && [ -d "${TOPS[0]}" ]; then
-            mv "${TOPS[0]}"/* .
+            copy_merge "${TOPS[0]}"
           else
-            mv "$TMP_DIR"/* .
+            copy_merge "$TMP_DIR"
           fi
+
           rm -rf "$TMP_DIR"
 
       - name: Remove the zip archive (optional)
