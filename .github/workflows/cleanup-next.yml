@@ -27,52 +27,51 @@ jobs:
           set -euxo pipefail
           rm -f next.config.js next.config.mjs next.config.ts || true
           rm -f tsconfig.next.json || true
-          rm -f postcss.config.js || true
-          rm -f .next || true
           rm -rf .next || true
-          # Typical Next scaffolding in src
           rm -f src/pages/_app.tsx src/pages/_app.jsx src/pages/_app.ts src/pages/_app.js || true
           rm -f src/pages/_document.tsx src/pages/_document.jsx src/pages/_document.ts src/pages/_document.js || true
 
-      - name: Replace Next imports with CRA-friendly equivalents
+      - name: Replace Next imports (link, image, head)
         shell: bash
         run: |
           set -euxo pipefail
-          # next/link -> react-router-dom Link
-          grep -rl --include='*.{ts,tsx,js,jsx}' "from 'next/link'" src || true | xargs -r sed -i "s/from 'next\\/link'/from 'react-router-dom'/g"
-          # next/image -> standard img (import removal)
-          grep -rl --include='*.{ts,tsx,js,jsx}' "from 'next/image'" src || true | xargs -r sed -i "s/import .* from 'next\\/image';\\?//g"
-          # next/head -> remove import; move head tags to public/index.html if needed
-          grep -rl --include='*.{ts,tsx,js,jsx}' "from 'next/head'" src || true | xargs -r sed -i "s/import .* from 'next\\/head';\\?//g"
+          # next/link -> react-router-dom
+          grep -rl --include='*.ts*' "from 'next/link'" src || true | xargs -r sed -i "s/from 'next\\/link'/from 'react-router-dom'/g"
+          # next/image -> remove import line
+          grep -rl --include='*.ts*' "from 'next/image'" src || true | xargs -r sed -i "s/^\\s*import .* from 'next\\/image';\\s*$//g"
+          # next/head -> remove import line
+          grep -rl --include='*.ts*' "from 'next/head'" src || true | xargs -r sed -i "s/^\\s*import .* from 'next\\/head';\\s*$//g"
+          # Convert <Link ... href= to <Link ... to=
+          grep -rl --include='*.ts*' "href=" src || true | xargs -r sed -i 's/<Link\\([^>]*\\)href=/<Link\\1to=/g'
 
-          # Replace <Link href=...> with <Link to=...> (basic heuristic)
-          # Converts href=\"/path\" to to=\"/path\" in JSX
-          grep -rl --include='*.{ts,tsx,js,jsx}' "href=" src || true | xargs -r sed -i 's/<Link\\([^>]*\\)href=/<Link\\1to=/g'
-
-      - name: Ensure public/index.html has a title
+      - name: Ensure public/index.html exists
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p public
           if [ ! -f public/index.html ]; then
             cat > public/index.html <<'HTML'
-            <!doctype html>
-            <html lang="en">
-              <head>
-                <meta charset="utf-8" />
-                <meta name="viewport" content="width=device-width, initial-scale=1" />
-                <title>Finance Main CRA</title>
-              </head>
-              <body>
-                <div id="root"></div>
-              </body>
-            </html>
-            HTML
-          else
-            # Ensure a title exists; if missing, insert one.
-            if ! grep -q "<title>" public/index.html; then
-              sed -i 's#<head>#<head>\n    <title>Finance Main CRA</title>#' public/index.html
-            fi
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Finance Main CRA</title>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+HTML
+          fi
+
+      - name: Ensure public/index.html has a <title>
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ -f public/index.html ] && ! grep -q "<title>" public/index.html; then
+            # Insert a title right after <head>
+            sed -i 's#<head>#<head>\n    <title>Finance Main CRA</title>#' public/index.html
           fi
 
       - name: Prevent committing foreign workflows
@@ -104,8 +103,4 @@ jobs:
             echo "No changes to commit." && exit 0
           fi
           git commit -m "Cleanup Next.js artifacts and replace Next imports"
-
-      - name: Push changes
-        run: |
-          set -euxo pipefail
           git push origin "${{ github.event.inputs.target_branch }}"
