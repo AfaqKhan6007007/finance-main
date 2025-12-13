@@ -1,0 +1,84 @@
+name: Fix "@/..." alias imports and build CRA
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to fix and build'
+        default: 'react-migration-cra-ts'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Show current alias imports (debug)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "Scanning for '@/...' imports under src:"
+          git ls-files | grep -E '^src/.*\.(tsx|ts|jsx|js)$' | xargs -r grep -n "from '@/"
+
+      - name: Convert '@/...' imports to absolute-from-src
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # This simplistic conversion removes the "@/"
+          # So "@/data/report" -> "data/report"
+          # and "@/components/Widget" -> "components/Widget"
+          #
+          # Works when the target module resides under src/<path>.
+          # If any import targets outside src or custom alias, we’ll handle those separately after this pass.
+          git ls-files | grep -E '^src/.*\.(tsx|ts|jsx|js)$' | while read -r f; do
+            if grep -q "from '@/"; then
+              sed -i "s#from '@/#from '#g" "$f"
+            fi
+          done
+
+      - name: Validate remaining '@/...' imports (if any)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          REMAINING=$(git ls-files | grep -E '^src/.*\.(tsx|ts|jsx|js)$' | xargs -r grep -n "from '@/")
+          if [ -n "$REMAINING" ]; then
+            echo "Remaining '@/...' imports after conversion:"
+            echo "$REMAINING"
+            echo "If some imports are outside src or use custom aliases, we need manual mapping."
+          else
+            echo "No remaining '@/...' imports."
+          fi
+
+      - name: Commit alias import fixes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Convert Next alias imports ('@/...') to CRA-compatible imports from src"
+            git push origin "${{ github.event.inputs.target_branch }}"
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build CRA
+        run: npm run build
