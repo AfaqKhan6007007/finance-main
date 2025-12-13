@@ -22,6 +22,7 @@ jobs:
           ref: ${{ github.event.inputs.target_branch }}
 
       - name: Add routing files and update App.tsx
+        shell: bash
         run: |
           set -euxo pipefail
           mkdir -p src/routes
@@ -47,54 +48,27 @@ jobs:
           ];
           TSX
 
-          # Update src/App.tsx to use central routes map
-          # If src/App.tsx doesn't exist (unexpected), create a basic one
-          if [ ! -f src/App.tsx ]; then
-            cat > src/App.tsx <<'TSX'
-            import React from 'react';
-            import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
-            import { routes } from './routes';
+          # Overwrite src/App.tsx to import and render routes
+          cat > src/App.tsx <<'TSX'
+          import React from 'react';
+          import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+          import { routes } from './routes';
 
-            export default function App() {
-              return (
-                <BrowserRouter>
-                  <nav>
-                    <Link to="/">Home</Link>
-                  </nav>
-                  <Routes>
-                    {routes.map((r) => (
-                      <Route key={r.path} path={r.path} element={r.element} />
-                    ))}
-                  </Routes>
-                </BrowserRouter>
-              );
-            }
-            TSX
-          else
-            # Try to update existing App.tsx to import and render routes
-            # This is a simple replacement; if your App.tsx is custom, we keep it minimal and non-destructive.
-            # We will rewrite App.tsx with the routes import and mapping.
-            cat > src/App.tsx <<'TSX'
-            import React from 'react';
-            import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
-            import { routes } from './routes';
-
-            export default function App() {
-              return (
-                <BrowserRouter>
-                  <nav>
-                    <Link to="/">Home</Link>
-                  </nav>
-                  <Routes>
-                    {routes.map((r) => (
-                      <Route key={r.path} path={r.path} element={r.element} />
-                    ))}
-                  </Routes>
-                </BrowserRouter>
-              );
-            }
-            TSX
-          fi
+          export default function App() {
+            return (
+              <BrowserRouter>
+                <nav style={{ padding: '0.5rem' }}>
+                  <Link to="/">Home</Link>
+                </nav>
+                <Routes>
+                  {routes.map((r) => (
+                    <Route key={r.path} path={r.path} element={r.element} />
+                  ))}
+                </Routes>
+              </BrowserRouter>
+            );
+          }
+          TSX
 
       - name: Commit routing changes
         run: |
