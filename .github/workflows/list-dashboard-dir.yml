@@ -1,0 +1,27 @@
+name: List files in app/(pages)/user/dashboard
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to inspect'
+        default: 'react-migration-cra-ts'
+        required: true
+        type: string
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+      - name: Show directory contents
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ls -la
+          echo "Listing app/(pages)/user/dashboard:"
+          ls -la "app/(pages)/user/dashboard" || { echo "Directory not found"; exit 1; }
+          echo "Tracked files matching dashboard under app/(pages)/user/dashboard:"
+          git ls-files | grep -E '^app/\(pages\)/user/dashboard/' || true
