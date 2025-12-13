@@ -1,0 +1,201 @@
+name: Migrate Dashboard from Next.js into CRA
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to update'
+        default: 'react-migration-cra-ts'
+        required: true
+        type: string
+      dashboard_hint_path:
+        description: 'Optional hint path (e.g., pages/dashboard.tsx or app/dashboard/page.tsx)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  migrate-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Find Dashboard source in Next.js code
+        id: find_dashboard
+        shell: bash
+        run: |
+          set -euxo pipefail
+          HINT="${{ github.event.inputs.dashboard_hint_path }}"
+          FOUND=""
+          if [ -n "$HINT" ] && [ -f "$HINT" ]; then
+            FOUND="$HINT"
+          else
+            # Search common Next.js locations
+            for candidate in \
+              "pages/dashboard.tsx" \
+              "pages/dashboard.jsx" \
+              "pages/dashboard.js" \
+              "src/pages/dashboard.tsx" \
+              "src/pages/dashboard.jsx" \
+              "src/pages/dashboard.js" \
+              "app/dashboard/page.tsx" \
+              "app/dashboard/page.jsx" \
+              "app/dashboard/page.js" \
+              "src/app/dashboard/page.tsx" \
+              "src/app/dashboard/page.jsx" \
+              "src/app/dashboard/page.js"
+            do
+              if [ -f "$candidate" ]; then
+                FOUND="$candidate"
+                break
+              fi
+            done
+
+            # Fallback: grep for files named dashboard
+            if [ -z "$FOUND" ]; then
+              FOUND="$(git ls-files | grep -E '(^|/)dashboard\.(tsx|jsx|js)$' || true)"
+            fi
+          fi
+
+          if [ -z "$FOUND" ]; then
+            echo "No Dashboard source file found. Provide dashboard_hint_path." >&2
+            exit 1
+          fi
+
+          echo "found_path=$FOUND" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare destination directories
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p src/pages src/routes
+
+      - name: Transform and copy Dashboard into CRA
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SRC="${{ steps.find_dashboard.outputs.found_path }}"
+          DEST="src/pages/Dashboard.tsx"
+
+          # Copy source to destination (normalize extension to .tsx)
+          cp "$SRC" "$DEST" || { echo "Failed to copy $SRC to $DEST"; exit 1; }
+
+          # Remove Next-specific imports and adapt to CRA
+          # next/head -> remove import line
+          sed -i "s/^\\s*import .* from 'next\\/head';\\s*$//g" "$DEST"
+          # next/image -> remove import line, we will convert JSX usage heuristically
+          sed -i "s/^\\s*import .* from 'next\\/image';\\s*$//g" "$DEST"
+          # next/link -> replace import with react-router-dom
+          sed -i "s/from 'next\\/link'/from 'react-router-dom'/g" "$DEST"
+          # If Link is imported from next/link without default/named specifics, it's okay; CRA uses named Link as well.
+
+          # Convert <Link href=...> to <Link to=...>
+          sed -i 's/<Link\\([^>]*\\)href=/<Link\\1to=/g' "$DEST"
+
+          # Heuristic: Replace <Image ... src=... alt=... /> with <img ... />
+          # Remove closing pattern ' />' after Image becomes img
+          sed -i 's/<Image/<img/g' "$DEST"
+
+          # Remove Next.js metadata/Head usage in the component body (simple heuristic)
+          # If the file uses <Head>...</Head>, strip it (this is a basic removal; complex cases may require manual follow-up)
+          sed -i 's/<Head>.*<\/Head>//g' "$DEST"
+
+          # Ensure a default export for CRA page component if missing
+          if ! grep -q 'export default' "$DEST"; then
+            # Try to wrap with a default export if a named component exists
+            NAME=$(grep -E 'export (const|function|class) ' "$DEST" | head -n1 | sed -E 's/export (const|function|class) ([A-Za-z0-9_]+)/\2/' || true)
+            if [ -n "$NAME" ]; then
+              echo "" >> "$DEST"
+              echo "export default $NAME;" >> "$DEST"
+            else
+              # Fallback: wrap content in a basic component if we cannot detect
+              cat > "$DEST" <<'TSX'
+import React from 'react';
+export default function Dashboard() {
+  return <main style={{ padding: '1rem' }}><h1>Dashboard</h1></main>;
+}
+TSX
+            fi
+          fi
+
+      - name: Wire Dashboard into routes and nav
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # Update routes
+          cat > src/routes/index.tsx <<'TSX'
+import React from 'react';
+import Home from '../pages/Home';
+import Dashboard from '../pages/Dashboard';
+
+export type AppRoute = { path: string; element: React.ReactElement };
+
+export const routes: AppRoute[] = [
+  { path: '/', element: <Home /> },
+  { path: '/dashboard', element: <Dashboard /> },
+];
+TSX
+
+          # Update App.tsx nav links
+          cat > src/App.tsx <<'TSX'
+import React from 'react';
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { routes } from './routes';
+
+export default function App() {
+  const links = [
+    { to: '/', label: 'Home' },
+    { to: '/dashboard', label: 'Dashboard' },
+  ];
+
+  return (
+    <BrowserRouter>
+      <nav style={{ padding: '0.5rem', display: 'flex', gap: '0.75rem' }}>
+        {links.map((l) => (
+          <Link key={l.to} to={l.to}>{l.label}</Link>
+        ))}
+      </nav>
+      <Routes>
+        {routes.map((r) => (
+          <Route key={r.path} path={r.path} element={r.element} />
+        ))}
+      </Routes>
+    </BrowserRouter>
+  );
+}
+TSX
+
+      - name: Prevent committing foreign workflows
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ -d ".github/workflows" ]; then
+            find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) \
+              ! -name "unzip-finance-archive.yml" \
+              ! -name "scaffold-cra.yml" \
+              ! -name "migrate-routing.yml" \
+              ! -name "migrate-pages.yml" \
+              ! -name "migrate-more-pages.yml" \
+              ! -name "cleanup-next.yml" \
+              ! -name "ensure-build.yml" \
+              ! -name "migrate-dashboard-from-next.yml" -exec rm -f {} +
+          fi
+
+      - name: Commit Dashboard migration
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add src/pages/Dashboard.tsx src/routes/index.tsx src/App.tsx
+          if git diff --cached --quiet; then
+            echo "No changes to commit." && exit 0
+          fi
+          git commit -m "Migrate Dashboard from Next.js into CRA and wire routes/nav"
+          git push origin "${{ github.event.inputs.target_branch }}"
