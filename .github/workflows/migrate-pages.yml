@@ -1,0 +1,115 @@
+name: Migrate initial pages into CRA
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to update'
+        default: 'react-migration-cra-ts'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  pages-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Create Home page and wire routes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p src/pages
+
+          # Create src/pages/Home.tsx
+          cat > src/pages/Home.tsx <<'TSX'
+          import React from 'react';
+
+          export default function Home() {
+            return (
+              <main style={{ padding: '1rem' }}>
+                <h1>Home</h1>
+                <p>Welcome to the CRA-migrated app.</p>
+              </main>
+            );
+          }
+          TSX
+
+          # Update src/routes/index.tsx to import Home from pages
+          # If the file exists, rewrite with a clean routes map using the new Home component
+          mkdir -p src/routes
+          cat > src/routes/index.tsx <<'TSX'
+          import React from 'react';
+          import Home from '../pages/Home';
+
+          export type AppRoute = {
+            path: string;
+            element: React.ReactElement;
+          };
+
+          export const routes: AppRoute[] = [
+            { path: '/', element: <Home /> },
+          ];
+          TSX
+
+          # Ensure App.tsx renders routes
+          cat > src/App.tsx <<'TSX'
+          import React from 'react';
+          import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+          import { routes } from './routes';
+
+          export default function App() {
+            return (
+              <BrowserRouter>
+                <nav style={{ padding: '0.5rem' }}>
+                  <Link to="/">Home</Link>
+                </nav>
+                <Routes>
+                  {routes.map((r) => (
+                    <Route key={r.path} path={r.path} element={r.element} />
+                  ))}
+                </Routes>
+              </BrowserRouter>
+            );
+          }
+          TSX
+
+          # Prevent committing foreign workflows that may exist from the ZIP
+          if [ -d ".github/workflows" ]; then
+            find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) \
+              ! -name "unzip-finance-archive.yml" \
+              ! -name "scaffold-cra.yml" \
+              ! -name "migrate-routing.yml" \
+              ! -name "migrate-pages.yml" -exec rm -f {} +
+          fi
+
+      - name: Commit page migration
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add -A
+
+          # Ensure only our workflows are staged
+          git restore --staged --worktree -- .github/workflows || true
+          for wf in unzip-finance-archive.yml scaffold-cra.yml migrate-routing.yml migrate-pages.yml; do
+            if [ -f ".github/workflows/$wf" ]; then
+              git add ".github/workflows/$wf"
+            fi
+          done
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit." && exit 0
+          fi
+          git commit -m "Migrate initial page: src/pages/Home.tsx and route wiring"
+
+      - name: Push changes
+        run: |
+          set -euxo pipefail
+          git push origin "${{ github.event.inputs.target_branch }}"
