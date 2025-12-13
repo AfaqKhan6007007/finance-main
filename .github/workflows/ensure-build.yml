@@ -21,7 +21,7 @@ jobs:
         with:
           ref: ${{ github.event.inputs.target_branch }}
 
-      - name: Ensure react-scripts in package.json
+      - name: Pin TypeScript 4.9.5 and ensure react-scripts 5.0.1
         shell: bash
         run: |
           set -euxo pipefail
@@ -29,16 +29,45 @@ jobs:
             echo "package.json not found" >&2
             exit 1
           fi
-          # Add react-scripts if not present
-          if ! grep -q '"react-scripts"' package.json; then
-            # Use jq if available to avoid formatting issues; otherwise sed injects a dependency
-            sudo apt-get update && sudo apt-get install -y jq || true
-            if command -v jq >/dev/null 2>&1; then
-              tmp=$(mktemp)
-              jq '.dependencies += {"react-scripts":"^5.0.1"}' package.json > "$tmp" && mv "$tmp" package.json
+
+          sudo apt-get update && sudo apt-get install -y jq || true
+
+          # Ensure devDependencies.typescript is 4.9.5
+          if command -v jq >/dev/null 2>&1; then
+            tmp=$(mktemp)
+            # Add devDependencies if missing
+            if ! jq -e '.devDependencies' package.json >/dev/null; then
+              jq '. + {devDependencies:{}}' package.json > "$tmp" && mv "$tmp" package.json
+            fi
+            # Set TypeScript to 4.9.5
+            tmp=$(mktemp)
+            jq '.devDependencies.typescript = "4.9.5"' package.json > "$tmp" && mv "$tmp" package.json
+          else
+            # Fallback sed: if devDependencies exists, replace typescript line or add it
+            if grep -q '"devDependencies"' package.json; then
+              if grep -q '"typescript"' package.json; then
+                sed -i 's/"typescript": "[^"]*"/"typescript": "4.9.5"/' package.json
+              else
+                sed -i 's/"devDependencies": {/"devDependencies": {\\n    "typescript": "4.9.5",/' package.json
+              fi
             else
-              # Fallback sed: inject into dependencies block
-              sed -i 's/"dependencies": {/"dependencies": {\\n    "react-scripts": "^5.0.1",/' package.json
+              sed -i 's/}$/,\n  "devDependencies": {\n    "typescript": "4.9.5"\n  }\n}/' package.json
+            fi
+          fi
+
+          # Ensure react-scripts at dependencies
+          if command -v jq >/dev/null 2>&1; then
+            tmp=$(mktemp)
+            jq '.dependencies["react-scripts"] = "5.0.1"' package.json > "$tmp" && mv "$tmp" package.json
+          else
+            if grep -q '"dependencies"' package.json; then
+              if grep -q '"react-scripts"' package.json; then
+                sed -i 's/"react-scripts": "[^"]*"/"react-scripts": "5.0.1"/' package.json
+              else
+                sed -i 's/"dependencies": {/"dependencies": {\\n    "react-scripts": "5.0.1",/' package.json
+              fi
+            else
+              sed -i 's/^{/{\n  "dependencies": {\n    "react-scripts": "5.0.1"\n  },/' package.json
             fi
           fi
 
@@ -55,12 +84,12 @@ jobs:
         run: npm run build
 
       - name: Commit package.json changes (if any)
+        shell: bash
         run: |
           set -euxo pipefail
           if ! git diff --quiet package.json; then
             git config user.name "github-actions"
             git config user.email "github-actions@github.com"
             git add package.json
-            git commit -m "Ensure react-scripts present for CRA build"
+            git commit -m "Pin TypeScript to 4.9.5 and ensure react-scripts 5.0.1"
             git push origin "${{ github.event.inputs.target_branch }}"
-          fi
