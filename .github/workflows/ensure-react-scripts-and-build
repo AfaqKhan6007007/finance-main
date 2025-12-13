@@ -1,0 +1,68 @@
+name: Ensure react-scripts installed and build CRA
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to fix and build'
+        default: 'react-migration-cra-ts'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install or pin react-scripts and TypeScript
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ ! -f package.json ]; then
+            echo "package.json not found" >&2
+            exit 1
+          fi
+
+          # Install react-scripts 5.0.1 if missing
+          if ! jq -e '.dependencies["react-scripts"]' package.json >/dev/null 2>&1; then
+            npm install --save react-scripts@5.0.1
+          else
+            echo "react-scripts already listed in package.json"
+          fi
+
+          # Pin TypeScript to 4.9.5 for CRA 5 compatibility
+          # Use devDependency; install even if already present at v5
+          npm install --save-dev typescript@4.9.5
+
+      - name: Commit package.json changes (if any)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if ! git diff --quiet package.json package-lock.json; then
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            git add package.json package-lock.json
+            git commit -m "Ensure react-scripts@5.0.1 and TypeScript@4.9.5 for CRA build"
+            git push origin "${{ github.event.inputs.target_branch }}"
+          else
+            echo "No changes to commit."
+          fi
+
+      - name: Install dependencies cleanly
+        run: npm ci || npm install
+
+      - name: Build CRA
+        run: npm run build
