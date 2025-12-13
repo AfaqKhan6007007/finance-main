@@ -31,63 +31,66 @@ jobs:
         with:
           ref: ${{ github.event.inputs.target_branch }}
 
-      - name: Create additional pages and API client
-        shell: bash
+      - name: Ensure directories exist
         run: |
           set -euxo pipefail
-          mkdir -p src/pages src/api
+          mkdir -p src/pages src/api src/routes
 
-          # Dashboard page (optional)
-          if [ "${{ github.event.inputs.include_dashboard }}" = "true" ]; then
-            cat > src/pages/Dashboard.tsx <<'TSX'
-            import React from 'react';
+      - name: Create Dashboard page (optional)
+        if: ${{ inputs.include_dashboard == 'true' }}
+        shell: bash
+        run: |
+          cat > src/pages/Dashboard.tsx <<'TSX'
+          import React from 'react';
 
-            export default function Dashboard() {
-              return (
-                <main style={{ padding: '1rem' }}>
-                  <h1>Dashboard</h1>
-                  <p>Overview of key metrics.</p>
-                </main>
-              );
-            }
-            TSX
-          fi
+          export default function Dashboard() {
+            return (
+              <main style={{ padding: '1rem' }}>
+                <h1>Dashboard</h1>
+                <p>Overview of key metrics.</p>
+              </main>
+            );
+          }
+          TSX
 
-          # Login page (optional)
-          if [ "${{ github.event.inputs.include_login }}" = "true" ]; then
-            cat > src/pages/Login.tsx <<'TSX'
-            import React, { useState } from 'react';
+      - name: Create Login page (optional)
+        if: ${{ inputs.include_login == 'true' }}
+        shell: bash
+        run: |
+          cat > src/pages/Login.tsx <<'TSX'
+          import React, { useState } from 'react';
 
-            export default function Login() {
-              const [email, setEmail] = useState('');
-              const [password, setPassword] = useState('');
-              const onSubmit = (e: React.FormEvent) => {
-                e.preventDefault();
-                // TODO: wire up real auth call
-                alert(`Logging in as ${email}`);
-              };
+          export default function Login() {
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const onSubmit = (e: React.FormEvent) => {
+              e.preventDefault();
+              // TODO: wire up real auth call
+              alert(`Logging in as ${email}`);
+            };
 
-              return (
-                <main style={{ padding: '1rem' }}>
-                  <h1>Login</h1>
-                  <form onSubmit={onSubmit} style={{ display: 'grid', gap: '0.5rem', maxWidth: 320 }}>
-                    <label>
-                      Email
-                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-                    </label>
-                    <label>
-                      Password
-                      <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-                    </label>
-                    <button type="submit">Sign in</button>
-                  </form>
-                </main>
-              );
-            }
-            TSX
-          fi
+            return (
+              <main style={{ padding: '1rem' }}>
+                <h1>Login</h1>
+                <form onSubmit={onSubmit} style={{ display: 'grid', gap: '0.5rem', maxWidth: 320 }}>
+                  <label>
+                    Email
+                    <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                  </label>
+                  <label>
+                    Password
+                    <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                  </label>
+                  <button type="submit">Sign in</button>
+                </form>
+              </main>
+            );
+          }
+          TSX
 
-          # API client
+      - name: Add API client
+        shell: bash
+        run: |
           cat > src/api/client.ts <<'TS'
           export const API_BASE = process.env.REACT_APP_API_BASE_URL || '';
 
@@ -111,10 +114,13 @@ jobs:
           }
           TS
 
-          # Update routes to include new pages if they exist
+      - name: Update routes to include new pages
+        shell: bash
+        run: |
           cat > src/routes/index.tsx <<'TSX'
           import React from 'react';
           import Home from '../pages/Home';
+          // These imports will succeed only if files exist; keep inputs true to generate them.
           import Dashboard from '../pages/Dashboard';
           import Login from '../pages/Login';
 
@@ -122,13 +128,14 @@ jobs:
 
           export const routes: AppRoute[] = [
             { path: '/', element: <Home /> },
-            // The following routes will work if the files exist; otherwise TypeScript may warn until they’re added.
             { path: '/dashboard', element: <Dashboard /> },
             { path: '/login', element: <Login /> },
           ];
           TSX
 
-          # Update App.tsx nav links
+      - name: Update App.tsx navigation and route rendering
+        shell: bash
+        run: |
           cat > src/App.tsx <<'TSX'
           import React from 'react';
           import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
@@ -158,7 +165,9 @@ jobs:
           }
           TSX
 
-          # Prevent committing foreign workflows
+      - name: Prevent committing foreign workflows
+        run: |
+          set -euxo pipefail
           if [ -d ".github/workflows" ]; then
             find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) \
               ! -name "unzip-finance-archive.yml" \
