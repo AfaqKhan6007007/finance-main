@@ -1,18 +1,17 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
-
-function Home() {
-  return <h1>Home</h1>;
-}
+import { routes } from './routes';
 
 export default function App() {
   return (
     <BrowserRouter>
-      <nav>
+      <nav style={{ padding: '0.5rem' }}>
         <Link to="/">Home</Link>
       </nav>
       <Routes>
-        <Route path="/" element={<Home />} />
+        {routes.map((r) => (
+          <Route key={r.path} path={r.path} element={r.element} />
+        ))}
       </Routes>
     </BrowserRouter>
   );
