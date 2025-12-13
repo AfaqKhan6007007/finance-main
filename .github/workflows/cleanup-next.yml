@@ -1,0 +1,111 @@
+name: Cleanup Next.js artifacts and imports
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to clean'
+        default: 'react-migration-cra-ts'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Remove Next-specific files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f next.config.js next.config.mjs next.config.ts || true
+          rm -f tsconfig.next.json || true
+          rm -f postcss.config.js || true
+          rm -f .next || true
+          rm -rf .next || true
+          # Typical Next scaffolding in src
+          rm -f src/pages/_app.tsx src/pages/_app.jsx src/pages/_app.ts src/pages/_app.js || true
+          rm -f src/pages/_document.tsx src/pages/_document.jsx src/pages/_document.ts src/pages/_document.js || true
+
+      - name: Replace Next imports with CRA-friendly equivalents
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # next/link -> react-router-dom Link
+          grep -rl --include='*.{ts,tsx,js,jsx}' "from 'next/link'" src || true | xargs -r sed -i "s/from 'next\\/link'/from 'react-router-dom'/g"
+          # next/image -> standard img (import removal)
+          grep -rl --include='*.{ts,tsx,js,jsx}' "from 'next/image'" src || true | xargs -r sed -i "s/import .* from 'next\\/image';\\?//g"
+          # next/head -> remove import; move head tags to public/index.html if needed
+          grep -rl --include='*.{ts,tsx,js,jsx}' "from 'next/head'" src || true | xargs -r sed -i "s/import .* from 'next\\/head';\\?//g"
+
+          # Replace <Link href=...> with <Link to=...> (basic heuristic)
+          # Converts href=\"/path\" to to=\"/path\" in JSX
+          grep -rl --include='*.{ts,tsx,js,jsx}' "href=" src || true | xargs -r sed -i 's/<Link\\([^>]*\\)href=/<Link\\1to=/g'
+
+      - name: Ensure public/index.html has a title
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p public
+          if [ ! -f public/index.html ]; then
+            cat > public/index.html <<'HTML'
+            <!doctype html>
+            <html lang="en">
+              <head>
+                <meta charset="utf-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <title>Finance Main CRA</title>
+              </head>
+              <body>
+                <div id="root"></div>
+              </body>
+            </html>
+            HTML
+          else
+            # Ensure a title exists; if missing, insert one.
+            if ! grep -q "<title>" public/index.html; then
+              sed -i 's#<head>#<head>\n    <title>Finance Main CRA</title>#' public/index.html
+            fi
+          fi
+
+      - name: Prevent committing foreign workflows
+        run: |
+          set -euxo pipefail
+          if [ -d ".github/workflows" ]; then
+            find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) \
+              ! -name "unzip-finance-archive.yml" \
+              ! -name "scaffold-cra.yml" \
+              ! -name "migrate-routing.yml" \
+              ! -name "migrate-pages.yml" \
+              ! -name "migrate-more-pages.yml" \
+              ! -name "cleanup-next.yml" -exec rm -f {} +
+          fi
+
+      - name: Commit cleanup
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add -A
+          git restore --staged --worktree -- .github/workflows || true
+          for wf in unzip-finance-archive.yml scaffold-cra.yml migrate-routing.yml migrate-pages.yml migrate-more-pages.yml cleanup-next.yml; do
+            if [ -f ".github/workflows/$wf" ]; then
+              git add ".github/workflows/$wf"
+            fi
+          done
+          if git diff --cached --quiet; then
+            echo "No changes to commit." && exit 0
+          fi
+          git commit -m "Cleanup Next.js artifacts and replace Next imports"
+
+      - name: Push changes
+        run: |
+          set -euxo pipefail
+          git push origin "${{ github.event.inputs.target_branch }}"
