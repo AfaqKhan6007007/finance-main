@@ -1,0 +1,123 @@
+name: Migrate routing into target branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to update'
+        default: 'react-migration-cra-ts'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  routing-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Add routing files and update App.tsx
+        run: |
+          set -euxo pipefail
+          mkdir -p src/routes
+
+          # Create src/routes/index.tsx
+          cat > src/routes/index.tsx <<'TSX'
+          import React from 'react';
+
+          // Example placeholder pages
+          const Home: React.FC = () => <h1>Home</h1>;
+
+          export type AppRoute = {
+            path: string;
+            element: React.ReactElement;
+            // You can add route meta here (e.g., authRequired, title) later
+          };
+
+          export const routes: AppRoute[] = [
+            { path: '/', element: <Home /> },
+            // Add more routes as pages are migrated:
+            // { path: '/dashboard', element: <Dashboard /> },
+            // { path: '/login', element: <Login /> },
+          ];
+          TSX
+
+          # Update src/App.tsx to use central routes map
+          # If src/App.tsx doesn't exist (unexpected), create a basic one
+          if [ ! -f src/App.tsx ]; then
+            cat > src/App.tsx <<'TSX'
+            import React from 'react';
+            import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+            import { routes } from './routes';
+
+            export default function App() {
+              return (
+                <BrowserRouter>
+                  <nav>
+                    <Link to="/">Home</Link>
+                  </nav>
+                  <Routes>
+                    {routes.map((r) => (
+                      <Route key={r.path} path={r.path} element={r.element} />
+                    ))}
+                  </Routes>
+                </BrowserRouter>
+              );
+            }
+            TSX
+          else
+            # Try to update existing App.tsx to import and render routes
+            # This is a simple replacement; if your App.tsx is custom, we keep it minimal and non-destructive.
+            # We will rewrite App.tsx with the routes import and mapping.
+            cat > src/App.tsx <<'TSX'
+            import React from 'react';
+            import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+            import { routes } from './routes';
+
+            export default function App() {
+              return (
+                <BrowserRouter>
+                  <nav>
+                    <Link to="/">Home</Link>
+                  </nav>
+                  <Routes>
+                    {routes.map((r) => (
+                      <Route key={r.path} path={r.path} element={r.element} />
+                    ))}
+                  </Routes>
+                </BrowserRouter>
+              );
+            }
+            TSX
+          fi
+
+      - name: Commit routing changes
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add -A
+
+          # Ensure we don't accidentally stage foreign workflow files
+          git restore --staged --worktree -- .github/workflows || true
+          # Re-stage our known workflows
+          for wf in unzip-finance-archive.yml scaffold-cra.yml migrate-routing.yml; do
+            if [ -f ".github/workflows/$wf" ]; then
+              git add ".github/workflows/$wf"
+            fi
+          done
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit." && exit 0
+          fi
+          git commit -m "Add routing scaffold: src/routes/index.tsx and wire into App.tsx"
+
+      - name: Push changes
+        run: |
+          set -euxo pipefail
+          git push origin "${{ github.event.inputs.target_branch }}"
