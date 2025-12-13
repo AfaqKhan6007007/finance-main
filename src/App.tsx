@@ -6,7 +6,6 @@ export default function App() {
   const links = [
     { to: '/', label: 'Home' },
     { to: '/dashboard', label: 'Dashboard' },
-    { to: '/login', label: 'Login' },
   ];
 
   return (
