@@ -1,0 +1,66 @@
+name: Unzip finance-main.zip into repo root
+
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: 'Relative path to zip file'
+        default: 'finance-main.zip'
+        required: true
+        type: string
+      target_branch:
+        description: 'Branch to unzip and commit to'
+        default: 'react-migration-cra-ts'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  unzip-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Ensure unzip is available
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
+      - name: Unzip archive
+        run: |
+          set -euxo pipefail
+          ARCHIVE_PATH="${{ github.event.inputs.path }}"
+          if [ ! -f "$ARCHIVE_PATH" ]; then
+            echo "Archive not found: $ARCHIVE_PATH" >&2
+            exit 1
+          fi
+          TMP_DIR=$(mktemp -d)
+          unzip -q "$ARCHIVE_PATH" -d "$TMP_DIR"
+          shopt -s dotglob nullglob
+          TOPS=("$TMP_DIR"/*)
+          if [ ${#TOPS[@]} -eq 1 ] && [ -d "${TOPS[0]}" ]; then
+            mv "${TOPS[0]}"/* .
+          else
+            mv "$TMP_DIR"/* .
+          fi
+          rm -rf "$TMP_DIR"
+
+      - name: Remove the zip archive (optional)
+        run: rm -f finance-main.zip || true
+
+      - name: Commit changes
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit." && exit 0
+          fi
+          git commit -m "Unzip finance-main.zip into repo root"
+
+      - name: Push changes
+        run: git push origin ${{ github.event.inputs.target_branch }}
