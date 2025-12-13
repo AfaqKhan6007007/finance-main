@@ -1,0 +1,66 @@
+name: Ensure CRA build succeeds
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to build'
+        default: 'react-migration-cra-ts'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  install-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Ensure react-scripts in package.json
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [ ! -f package.json ]; then
+            echo "package.json not found" >&2
+            exit 1
+          fi
+          # Add react-scripts if not present
+          if ! grep -q '"react-scripts"' package.json; then
+            # Use jq if available to avoid formatting issues; otherwise sed injects a dependency
+            sudo apt-get update && sudo apt-get install -y jq || true
+            if command -v jq >/dev/null 2>&1; then
+              tmp=$(mktemp)
+              jq '.dependencies += {"react-scripts":"^5.0.1"}' package.json > "$tmp" && mv "$tmp" package.json
+            else
+              # Fallback sed: inject into dependencies block
+              sed -i 's/"dependencies": {/"dependencies": {\\n    "react-scripts": "^5.0.1",/' package.json
+            fi
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit package.json changes (if any)
+        run: |
+          set -euxo pipefail
+          if ! git diff --quiet package.json; then
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            git add package.json
+            git commit -m "Ensure react-scripts present for CRA build"
+            git push origin "${{ github.event.inputs.target_branch }}"
+          fi
