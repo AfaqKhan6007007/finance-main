@@ -1,0 +1,18 @@
+export const accounts = [
+  { code: "1001", name: "Cash on Hand", type: "Asset", balance: 45000 },
+  { code: "1002", name: "Accounts Receivable", type: "Asset", balance: 32000 },
+  { code: "1003", name: "Inventory", type: "Asset", balance: 28500 },
+  { code: "1004", name: "Prepaid Expenses", type: "Asset", balance: 5200 },
+  { code: "1005", name: "Equipment", type: "Asset", balance: 75000 },
+  { code: "2001", name: "Accounts Payable", type: "Liability", balance: 18000 },
+  { code: "2002", name: "Accrued Expenses", type: "Liability", balance: 8500 },
+  { code: "2003", name: "Short-term Loans", type: "Liability", balance: 25000 },
+  { code: "3001", name: "Sales Revenue", type: "Income", balance: 120000 },
+  { code: "3002", name: "Service Revenue", type: "Income", balance: 45000 },
+  { code: "3003", name: "Interest Income", type: "Income", balance: 1200 },
+  { code: "4001", name: "Operating Expenses", type: "Expense", balance: 55000 },
+  { code: "4002", name: "Rent Expense", type: "Expense", balance: 18000 },
+  { code: "4003", name: "Utilities Expense", type: "Expense", balance: 6500 },
+  { code: "4004", name: "Salaries Expense", type: "Expense", balance: 85000 },
+  { code: "5001", name: "Owner's Equity", type: "Equity", balance: 87500 },
+];
