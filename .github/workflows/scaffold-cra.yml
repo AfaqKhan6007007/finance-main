@@ -1,0 +1,157 @@
+name: Scaffold CRA TypeScript into target branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to scaffold and commit to'
+        default: 'react-migration-cra-ts'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  scaffold-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+
+      - name: Create CRA TypeScript scaffold
+        run: |
+          set -euxo pipefail
+
+          # package.json
+          cat > package.json <<'JSON'
+          {
+            "name": "finance-main-cra",
+            "version": "0.1.0",
+            "private": true,
+            "dependencies": {
+              "@types/react": "^18.3.3",
+              "@types/react-dom": "^18.3.0",
+              "react": "^18.3.1",
+              "react-dom": "^18.3.1",
+              "react-router-dom": "^6.26.2"
+            },
+            "scripts": {
+              "start": "react-scripts start",
+              "build": "react-scripts build",
+              "test": "react-scripts test",
+              "eject": "react-scripts eject"
+            },
+            "devDependencies": {
+              "typescript": "^5.6.2"
+            }
+          }
+          JSON
+
+          # tsconfig.json
+          cat > tsconfig.json <<'JSON'
+          {
+            "compilerOptions": {
+              "target": "ES2020",
+              "lib": ["DOM", "ES2020"],
+              "jsx": "react-jsx",
+              "module": "ESNext",
+              "moduleResolution": "Node",
+              "strict": true,
+              "skipLibCheck": true,
+              "resolveJsonModule": true,
+              "esModuleInterop": true,
+              "forceConsistentCasingInFileNames": true,
+              "baseUrl": "src"
+            },
+            "include": ["src"]
+          }
+          JSON
+
+          # public/index.html
+          mkdir -p public
+          cat > public/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>Finance Main CRA</title>
+            </head>
+            <body>
+              <noscript>You need to enable JavaScript to run this app.</noscript>
+              <div id="root"></div>
+            </body>
+          </html>
+          HTML
+
+          # src/index.tsx
+          mkdir -p src
+          cat > src/index.tsx <<'TSX'
+          import React from 'react';
+          import { createRoot } from 'react-dom/client';
+          import App from './App';
+
+          const container = document.getElementById('root')!;
+          const root = createRoot(container);
+          root.render(<App />);
+          TSX
+
+          # src/App.tsx
+          cat > src/App.tsx <<'TSX'
+          import React from 'react';
+          import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+
+          function Home() {
+            return <h1>Home</h1>;
+          }
+
+          export default function App() {
+            return (
+              <BrowserRouter>
+                <nav>
+                  <Link to="/">Home</Link>
+                </nav>
+                <Routes>
+                  <Route path="/" element={<Home />} />
+                </Routes>
+              </BrowserRouter>
+            );
+          }
+          TSX
+
+          # basic .env example
+          printf "REACT_APP_API_BASE_URL=\n" > .env.example
+
+          # Prevent adding any foreign workflows from prior unzip
+          if [ -d ".github/workflows" ]; then
+            find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) \
+              ! -name "unzip-finance-archive.yml" \
+              ! -name "scaffold-cra.yml" -exec rm -f {} +
+          fi
+
+      - name: Commit CRA scaffold
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add -A
+          # Ensure only our workflows are staged
+          git restore --staged --worktree -- .github/workflows || true
+          if [ -f ".github/workflows/unzip-finance-archive.yml" ]; then
+            git add .github/workflows/unzip-finance-archive.yml
+          fi
+          if [ -f ".github/workflows/scaffold-cra.yml" ]; then
+            git add .github/workflows/scaffold-cra.yml
+          fi
+          if git diff --cached --quiet; then
+            echo "No changes to commit." && exit 0
+          fi
+          git commit -m "Scaffold CRA TypeScript (public/, src/, tsconfig.json, package.json)"
+
+      - name: Push changes
+        run: |
+          set -euxo pipefail
+          git push origin "${{ github.event.inputs.target_branch }}"
