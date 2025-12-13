@@ -44,25 +44,23 @@ jobs:
           # Convert <Link ... href= to <Link ... to=
           grep -rl --include='*.ts*' "href=" src || true | xargs -r sed -i 's/<Link\\([^>]*\\)href=/<Link\\1to=/g'
 
-      - name: Ensure public/index.html exists
+      - name: Ensure public/index.html exists (no heredoc)
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p public
           if [ ! -f public/index.html ]; then
-            cat > public/index.html <<'HTML'
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Finance Main CRA</title>
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
-</html>
-HTML
+            printf '%s\n' '<!doctype html>' \
+            '<html lang="en">' \
+            '  <head>' \
+            '    <meta charset="utf-8" />' \
+            '    <meta name="viewport" content="width=device-width, initial-scale=1" />' \
+            '    <title>Finance Main CRA</title>' \
+            '  </head>' \
+            '  <body>' \
+            '    <div id="root"></div>' \
+            '  </body>' \
+            '</html>' > public/index.html
           fi
 
       - name: Ensure public/index.html has a <title>
@@ -70,11 +68,11 @@ HTML
         run: |
           set -euxo pipefail
           if [ -f public/index.html ] && ! grep -q "<title>" public/index.html; then
-            # Insert a title right after <head>
             sed -i 's#<head>#<head>\n    <title>Finance Main CRA</title>#' public/index.html
           fi
 
       - name: Prevent committing foreign workflows
+        shell: bash
         run: |
           set -euxo pipefail
           if [ -d ".github/workflows" ]; then
@@ -88,6 +86,7 @@ HTML
           fi
 
       - name: Commit cleanup
+        shell: bash
         run: |
           set -euxo pipefail
           git config user.name "github-actions"
