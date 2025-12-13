@@ -1,4 +1,4 @@
-name: Migrate Dashboard from Next.js into CRA (src/app support)
+name: Migrate Dashboard from Next.js into CRA (src/app support, escaped paths)
 
 on:
   workflow_dispatch:
@@ -53,14 +53,15 @@ jobs:
           set -euxo pipefail
           cd src_repo
           echo "Workspace (source): $PWD"
-          for d in src/app src/app/(pages) src/app/(pages)/user src/pages app pages; do
+          # Explicitly quote/escape parentheses to avoid shell interpretation
+          for d in "src/app" "src/app/(pages)" "src/app/(pages)/user" "src/pages" "app" "pages"; do
             if [ -d "$d" ]; then
               echo "Contents of $d:"
               ls -la "$d" || true
             fi
           done
 
-      - name: Locate Dashboard source (supports src/app)
+      - name: Locate Dashboard source (supports src/app with parentheses)
         id: find_dashboard
         shell: bash
         run: |
@@ -75,7 +76,7 @@ jobs:
             FOUND="$HINT"
           fi
 
-          # Try src/app/(pages)/user/dashboard first (your stated location)
+          # Try src/app/(pages)/user/dashboard first
           if [ -z "$FOUND" ]; then
             for candidate in \
               "src/app/(pages)/user/dashboard/page.tsx" \
@@ -132,9 +133,9 @@ jobs:
             done
           fi
 
-          # Grep fallback
+          # Grep fallback (escape parentheses)
           if [ -z "$FOUND" ]; then
-            FOUND="$(git ls-files | grep -E '(^|/)(app|src/app|pages|src/pages)/.*(dashboard|user/dashboard)/(page|index)\.(tsx|jsx|js)$' | head -n1 || true)"
+            FOUND="$(git ls-files | grep -E '(^|/)(app|src/app|pages|src/pages)/.*(dashboard|user\\/dashboard)/(page|index)\\.(tsx|jsx|js)$' | head -n1 || true)"
           fi
 
           if [ -z "$FOUND" ]; then
@@ -173,10 +174,8 @@ jobs:
           # Remove simple <Head>...</Head> blocks (non-greedy)
           perl -0777 -pe "s/<Head>.*?<\\/Head>//gs" -i "$FILE" || true
 
-          # If this is a server component (uses Next's "use server"), convert to client component
-          # by adding "use client" at the top when React hooks or client-side code is detected.
+          # If this is a server component (uses React hooks), ensure client component directive
           if grep -Eq 'useState|useEffect|useMemo|useCallback' "$FILE"; then
-            # Prepend "use client" if not present
             if ! grep -q "^['\"]use client['\"]" "$FILE"; then
               TMP="$(mktemp)"
               printf '%s\n' "/* Converted from Next app route to client component */" "'use client';" > "$TMP"
@@ -252,6 +251,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "Migrate Dashboard from Next.js (supports src/app paths) into CRA and wire routes/nav"
+            git commit -m "Migrate Dashboard from Next.js (supports src/app paths with parentheses) into CRA and wire routes/nav"
             git push origin "${{ steps.resolve.outputs.target_branch }}"
           fi
